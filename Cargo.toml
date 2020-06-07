@@ -1,0 +1,10 @@
+[package]
+name = "genetic-drawing-rust"
+version = "0.1.0"
+authors = ["beltegeuse <adrien.gruson@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+image = "*"
+imageproc = "*"
+rand = "*"
