@@ -7,13 +7,16 @@ fn main() {
 
     // Print text to the console
     let mut gen = genetic_drawing_rust::GeneticDrawing::load("./data/example.jpg");
-    gen.img_gradient.angle.to_image().save("ang.png").unwrap();
-    gen.img_gradient.mag.to_image().save("mag.png").unwrap();
+    {
+        let (img_mag, img_ang) = gen.img_gradient.to_image();
+        img_ang.save("ang.png").unwrap();
+        img_mag.save("mag.png").unwrap();
+    }
 
     // Register strokes
     println!("Brushes...");
     for i in 0..4 {
-        gen.register_brush(&format!("./brushes/watercolor/{}.jpg",i+1));
+        gen.register_brush(&format!("./brushes/watercolor/{}.jpg", i + 1));
     }
 
     // Brushes dumps
@@ -26,12 +29,56 @@ fn main() {
     const NB_ITER: usize = 100;
     for i in 0..NB_ITER {
         print!(" - {} ... ", i);
-        let mut dna = genetic_drawing_rust::DNAContext::new(&gen, 10, &mut rng, i as f32 / NB_ITER as f32, images.last());
+        let mut dna = genetic_drawing_rust::DNAContext::new(
+            &gen,
+            10,
+            &mut rng,
+            i as f32 / NB_ITER as f32,
+            images.last(),
+            None,
+        );
+        dna.iterate(20, &mut rng);
+        println!("{}", dna.error());
+        images.push(dna.to_image());
+        images
+            .last()
+            .unwrap()
+            .save(&format!("test_{}.png", i))
+            .unwrap();
+    }
+
+    const NB_ITER_STAGE2: usize = 40;
+    let cdf = genetic_drawing_rust::CDF::from_image("./data/mask.jpg");
+    gen.bruch_range = (
+        genetic_drawing_rust::MinMax {
+            min: 0.1,
+            max: 0.2
+        },
+        genetic_drawing_rust::MinMax {
+            min: 0.05,
+            max: 0.1
+        }
+    );
+    for i in 0..NB_ITER_STAGE2 {
+        print!(" - {} ... ", i);
+        let mut dna = genetic_drawing_rust::DNAContext::new(
+            &gen,
+            10,
+            &mut rng,
+            i as f32 / NB_ITER_STAGE2 as f32,
+            images.last(),
+            Some(&cdf),
+        );
         dna.iterate(30, &mut rng);
         println!("{}", dna.error());
         images.push(dna.to_image());
-        images.last().unwrap().save(&format!("test_{}.png", i)).unwrap();   
+        images
+            .last()
+            .unwrap()
+            .save(&format!("test_{}.png", i+NB_ITER))
+            .unwrap();
     }
+    
 
     // // Test of the different brushes
     // for i in 0..4 {
