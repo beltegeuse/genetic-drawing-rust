@@ -7,10 +7,11 @@ fn main() {
 
     // Print text to the console
     let mut gen = genetic_drawing_rust::GeneticDrawing::load("./data/example.jpg");
+    let (img_mag, img_ang) = gen.img_gradient.to_image();
+    img_ang.save("ang.png").unwrap();
+    img_mag.save("mag.png").unwrap();
     {
-        let (img_mag, img_ang) = gen.img_gradient.to_image();
-        img_ang.save("ang.png").unwrap();
-        img_mag.save("mag.png").unwrap();
+        genetic_drawing_rust::Distribution::from_gradients(&img_mag, 0.005).to_image().save("test.png").unwrap();
     }
 
     // Register strokes
@@ -29,13 +30,22 @@ fn main() {
     const NB_ITER: usize = 100;
     for i in 0..NB_ITER {
         print!(" - {} ... ", i);
+        let cdf = {
+            if i < 20 {
+                None
+            } else {
+                let scale = (i - 20) as f32 / (NB_ITER - 20) as f32; 
+                let t =  (1.0 - scale).powi(2) * 0.25 + 0.005;
+                Some(genetic_drawing_rust::Distribution::from_gradients(&img_mag, t))
+            }
+        };
         let mut dna = genetic_drawing_rust::DNAContext::new(
             &gen,
             10,
             &mut rng,
             i as f32 / NB_ITER as f32,
             images.last(),
-            None,
+            cdf.as_ref(),
         );
         dna.iterate(20, &mut rng);
         println!("{}", dna.error());
@@ -45,10 +55,14 @@ fn main() {
             .unwrap()
             .save(&format!("test_{}.png", i))
             .unwrap();
+        if let Some(cdf) = cdf {
+            cdf.to_image().save(&format!("dist_{}.png", i)).unwrap();
+        }
     }
 
     const NB_ITER_STAGE2: usize = 40;
-    let cdf = genetic_drawing_rust::CDF::from_image("./data/mask.jpg");
+    let cdf = image::open("./data/mask.jpg").unwrap().to_luma();
+    let cdf = genetic_drawing_rust::Distribution::from_image(&cdf);
     gen.bruch_range = (
         genetic_drawing_rust::MinMax {
             min: 0.1,

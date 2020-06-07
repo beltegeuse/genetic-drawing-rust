@@ -3,6 +3,18 @@ use imageproc;
 use imageproc::geometric_transformations::*;
 use rand::prelude::*;
 
+fn vec_f32_to_image(values: &Vec<f32>, width: u32, height: u32, scale: f32) -> DynamicImage {
+    let mut img = DynamicImage::new_luma8(width, height);
+    for x in 0..width {
+        for y in 0..height {
+            let v = values[(y * width + x) as usize] * scale;
+            let v = (v.max(0.0).min(1.0) * 255.0) as u8;
+            img.put_pixel(x, y, Pixel::from_channels(v, v, v, 255));
+        }
+    }
+    img
+}
+
 #[derive(Clone)]
 pub struct FloatImage {
     pub values: Vec<f32>,
@@ -12,15 +24,7 @@ pub struct FloatImage {
 
 impl FloatImage {
     pub fn to_image(&self) -> DynamicImage {
-        let mut img = DynamicImage::new_luma8(self.width, self.height);
-        for x in 0..self.width {
-            for y in 0..self.height {
-                let v = self.values[(x * self.height + y) as usize];
-                let v = (v.min(1.0).powf(1.0 / 2.2) * 255.0) as u8;
-                img.put_pixel(x, y, Pixel::from_channels(v, v, v, 255));
-            }
-        }
-        img
+        vec_f32_to_image(&self.values, self.width, self.height, 1.0)
     }
 }
 
@@ -30,16 +34,14 @@ impl FloatImage {
 // starting after some percent (20%) in the orginal code
 // then use some ramping to get a "t" value.
 // Then use a guassian based on some percent
-pub struct CDF {
+pub struct Distribution {
     pub values: Vec<f32>,
     pub width: u32,
     pub height: u32,
 }
 
-impl CDF {
-    pub fn from_image(filename: &str) -> CDF {
-        let img = image::open(filename).unwrap().to_luma();
-
+impl Distribution {
+    pub fn from_image(img: &GrayImage) -> Distribution {
         // Create the new CDF
         let mut cdf = Vec::with_capacity((img.width() * img.height()) as usize + 1);
         let mut cur = 0.0;
@@ -52,11 +54,19 @@ impl CDF {
         // Normalize the cdf
         cdf.iter_mut().for_each(|x| *x /= cur);
 
-        CDF {
+        Distribution {
             values: cdf,
             width: img.width(),
             height: img.height(),
         }
+    }
+
+    pub fn from_gradients(image: &DynamicImage, gaussian_size: f32) -> Distribution {
+        // Compute gradient
+        let img = image.to_luma();
+        let gaussian_size = img.width() as f32 * gaussian_size;
+        let img = imageproc::filter::gaussian_blur_f32(&img, gaussian_size);
+        Self::from_image(&img)
     }
 
     pub fn sample(&self, v: f32) -> (u32, u32) {
@@ -75,6 +85,14 @@ impl CDF {
         let y = id as u32 % self.height;
         (x, y)
     }
+
+    pub fn to_image(&self) -> DynamicImage {
+        let mut values = vec![0.0; (self.width*self.height) as usize];
+        for i in 0..(self.width*self.height) as usize {
+            values[i] = self.values[i+1] - self.values[i];
+        }
+        vec_f32_to_image(&values, self.width, self.height, 0.5 * (self.width*self.height) as f32)
+    }
 }
 
 pub struct GradientImage {
@@ -92,14 +110,11 @@ impl GradientImage {
 
         let mut mag = vec![0.0; (w * h) as usize];
         let mut angle = vec![0.0; (w * h) as usize];
-        for x in 0..img.width() {
-            for y in 0..img.height() {
-                let xv = gx.get_pixel(x, y)[0] as f32;
-                let yv = gy.get_pixel(x, y)[0] as f32;
-
-                mag[(x * h + y) as usize] = (xv * xv + yv * yv).sqrt();
-                angle[(x * h + y) as usize] = yv.atan2(xv).to_degrees();
-            }
+        for (i, (xv, yv)) in gx.pixels().zip(gy.pixels()).enumerate() {
+            let xv = xv[0] as f32;
+            let yv = yv[0] as f32;
+            mag[i] = (xv * xv + yv * yv).sqrt();
+            angle[i] = yv.atan2(xv).to_degrees();
         }
         let mag_max = *mag.iter().max_by(|i, j| i.partial_cmp(j).unwrap()).unwrap();
         let mag = mag
@@ -126,7 +141,7 @@ impl GradientImage {
     }
 
     pub fn get(&self, x: u32, y: u32) -> (f32, f32) {
-        let id = (x * self.mag.height + y) as usize;
+        let id = (y * self.mag.width + x) as usize;
         (self.mag.values[id], self.angle.values[id])
     }
 
@@ -200,15 +215,14 @@ impl GeneticDrawing {
 pub struct DNAContext<'draw, 'cdf> {
     org_image: GrayImage,
     pub image: GrayImage,
-    offset: i32,
     strokes: Vec<Stroke>,
     strokes_scales: MinMax,
     error: f32,
     pub gen: &'draw GeneticDrawing,
-    pub pos_cdf: Option<&'cdf CDF>,
+    pub pos_cdf: Option<&'cdf Distribution>,
 }
 
-pub fn blend_alpha(dest: &mut GrayImage, org: &GrayAlphaImage, xoff: i32, yoff: i32) {
+pub fn blend_alpha(dest: &mut GrayImage, org: &GrayAlphaImage, (xoff, yoff): (i32, i32)) {
     // Safe version of image blending
     for x in 0..org.width() {
         for y in 0..org.height() {
@@ -235,19 +249,11 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
         rng: &mut rand::rngs::ThreadRng,
         time: f32,
         prev_image: Option<&GrayImage>,
-        pos_cdf: Option<&'cdf CDF>,
+        pos_cdf: Option<&'cdf Distribution>,
     ) -> Self {
         // Compute the max size bruches
         let strokes_scales = MinMax::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
-        let max_size_bruches = strokes_scales.value(1.0);
-        let offset = gen
-            .brushes
-            .iter()
-            .map(|b| (b.width().max(b.height()) as f32 * max_size_bruches))
-            .max_by(|i, j| i.partial_cmp(j).unwrap())
-            .unwrap();
-        let offset = (offset * 0.5) as i32;
-
+        
         // Create a bigger image for easier spatting
         let mut image =
             image::DynamicImage::new_luma8(gen.img_grey.width(), gen.img_grey.height()).into_luma();
@@ -267,21 +273,19 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                     rng,
                     &strokes_scales,
                     (image.width(), image.height()),
-                    offset,
-                    gen.brushes.len(),
+                    &gen.brushes,
                     Some(&gen.img_gradient),
                     pos_cdf,
                 )
             })
             .collect::<Vec<_>>();
         for s in &strokes {
-            blend_alpha(&mut image, &s.draw(&gen.brushes), s.pos.0, s.pos.1);
+            blend_alpha(&mut image, &s.draw(&gen.brushes), s.get_position());
         }
 
         let mut dna = DNAContext {
             org_image,
             image,
-            offset,
             strokes,
             strokes_scales,
             error: 0.0,
@@ -298,25 +302,30 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                 // Clone the original image
                 let mut new_image = self.org_image.clone();
                 // Mutate one stroke
-                let mut new_strokes = self.strokes.clone();
-                new_strokes[i] = self.strokes[i].mutate(
+                let new_strokes = self.strokes[i].mutate(
                     rng,
                     &self.strokes_scales,
                     (self.image.width(), self.image.height()),
-                    self.offset,
-                    self.gen.brushes.len(),
+                    &self.gen.brushes,
                     Some(&self.gen.img_gradient),
                     self.pos_cdf,
                 );
-                // Update the images with all strokes
-                for s in &new_strokes {
-                    blend_alpha(&mut new_image, &s.draw(&self.gen.brushes), s.pos.0, s.pos.1);
+
+                // Update the images with all strokes (except the new one)
+                for s in 0..self.strokes.len() {
+                    if s == i {
+                        continue;
+                    }
+                    let s = &self.strokes[s];
+                    blend_alpha(&mut new_image, s.raster.as_ref().unwrap(), s.get_position());
                 }
+                blend_alpha(&mut new_image, new_strokes.raster.as_ref().unwrap(), new_strokes.get_position());
+
                 // Compute the error
                 let new_error = self.compute_error(&new_image);
                 if self.error > new_error {
                     self.error = new_error;
-                    self.strokes = new_strokes;
+                    self.strokes[i] = new_strokes;
                     self.image = new_image;
                 }
             }
@@ -354,6 +363,7 @@ pub struct Stroke {
     pub pos: (i32, i32),
     pub rotation: f32,
     pub brush_id: usize,
+    pub raster: Option<GrayAlphaImage>
 }
 
 impl Stroke {
@@ -371,13 +381,12 @@ impl Stroke {
     fn gen_position(
         rng: &mut rand::rngs::ThreadRng,
         img_size: (u32, u32),
-        offset: i32,
-        cdf: Option<&CDF>,
+        cdf: Option<&Distribution>,
     ) -> (i32, i32) {
         match cdf {
             None => (
-                rng.gen_range(-offset, img_size.0 as i32 + offset),
-                rng.gen_range(-offset, img_size.1 as i32 + offset),
+                rng.gen_range(0, img_size.0 as i32),
+                rng.gen_range(0, img_size.1 as i32),
             ),
             Some(ref cdf) => {
                 let (x, y) = cdf.sample(rng.gen_range(0.0, 1.0));
@@ -390,16 +399,15 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &MinMax,
         img_size: (u32, u32),
-        offset: i32,
-        nb_bruches: usize,
+        brushes: &Vec<GrayAlphaImage>,
         grads: Option<&GradientImage>,
-        cdf: Option<&CDF>,
+        cdf: Option<&Distribution>,
     ) -> Stroke {
         let value = rng.gen_range(0.0, 1.0);
         let size = scale.value(rng.gen_range(0.0, 1.0));
-        let pos = Stroke::gen_position(rng, img_size, offset, cdf);
+        let pos = Stroke::gen_position(rng, img_size, cdf);
         let rotation = rng.gen_range(0.0, 360.0);
-        let brush_id = rng.gen_range(0, nb_bruches);
+        let brush_id = rng.gen_range(0, brushes.len());
         // Update the rotation
         let mut s = Stroke {
             value,
@@ -407,8 +415,10 @@ impl Stroke {
             pos,
             rotation,
             brush_id,
+            raster: None
         };
         s.rotation = s.gen_rotation(rng, grads);
+        s.raster = Some(s.draw(brushes));
         s
     }
 
@@ -417,10 +427,9 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &MinMax,
         img_size: (u32, u32),
-        offset: i32,
-        nb_bruches: usize,
+        brushes: &Vec<GrayAlphaImage>,
         grads: Option<&GradientImage>,
-        cdf: Option<&CDF>,
+        cdf: Option<&Distribution>,
     ) -> Stroke {
         let mut mutations = vec![0, 1, 2, 3, 4];
         mutations.shuffle(rng);
@@ -433,17 +442,26 @@ impl Stroke {
             match m {
                 0 => new_stroke.value = rng.gen_range(0, 2) as f32,
                 1 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
-                2 => new_stroke.pos = Stroke::gen_position(rng, img_size, offset, cdf),
+                2 => new_stroke.pos = Stroke::gen_position(rng, img_size, cdf),
                 3 => new_stroke.rotation = self.gen_rotation(rng, grads),
-                4 => new_stroke.brush_id = rng.gen_range(0, nb_bruches),
+                4 => new_stroke.brush_id = rng.gen_range(0, brushes.len()),
                 _ => panic!("Not covered mutation approach"),
             };
         }
+        new_stroke.raster = Some(new_stroke.draw(brushes));
 
         new_stroke
     }
 
-    pub fn draw(&self, brushes: &Vec<GrayAlphaImage>) -> GrayAlphaImage {
+    pub fn get_position(&self) -> (i32, i32) {
+        let r = self.raster.as_ref().unwrap();
+        (
+            self.pos.0 - (r.width() as f32 * 0.5) as i32,
+            self.pos.1 - (r.height() as f32 * 0.5) as i32,
+        )
+    }
+
+    fn draw(&self, brushes: &Vec<GrayAlphaImage>) -> GrayAlphaImage {
         let b = &brushes[self.brush_id];
         let trans = Projection::translate(b.width() as f32 * 0.5, b.height() as f32 * 0.5)
             * Projection::rotate(self.rotation.to_radians())
