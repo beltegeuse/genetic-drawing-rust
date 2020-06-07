@@ -117,6 +117,7 @@ impl GeneticDrawing {
                 p[1] = 0;
             }
         });
+        // TODO: Make it squared.
         self.brushes.push(img_grey);
     }
 
@@ -128,21 +129,23 @@ impl GeneticDrawing {
 pub struct DNAContext<'draw> {
     org_image: GrayImage,
     pub image: GrayImage,
-    offset: u32,
+    offset: i32,
     strokes: Vec<Stroke>,
     strokes_scales: MinMax,
     error: f32,
     pub gen: &'draw GeneticDrawing,
 }
 
-pub fn blend_alpha(dest: &mut GrayImage, org: &GrayAlphaImage, xoff: u32, yoff: u32) {
+pub fn blend_alpha(dest: &mut GrayImage, org: &GrayAlphaImage, xoff: i32, yoff: i32) {
     // Safe version of image blending
     for x in 0..org.width() {
         for y in 0..org.height() {
-            if x + xoff < dest.width() && y + yoff < dest.height() {
+            let x_dest = x as i32 + xoff;
+            let y_dest = y as i32 + yoff;
+            if x_dest >= 0 && x_dest < dest.width() as i32 && y_dest >= 0 && y_dest < dest.height() as i32 {
                 let porg = org.get_pixel(x, y);
-                let alpha = (porg[1] as f32 / 255.0);
-                let pdest = dest.get_pixel_mut(x + xoff, y + yoff);
+                let alpha = porg[1] as f32 / 255.0;
+                let pdest = dest.get_pixel_mut(x_dest as u32, y_dest as u32);
                 pdest[0] = (alpha * porg[0] as f32 + (1.0 - alpha) * pdest[0] as f32) as u8;
             }
         }
@@ -155,7 +158,7 @@ impl<'draw> DNAContext<'draw> {
         brushcount: usize,
         rng: &mut rand::rngs::ThreadRng,
         time: f32,
-        prev_image: Option<&GrayImage>
+        prev_image: Option<&GrayImage>,
     ) -> Self {
         // Compute the max size bruches
         let strokes_scales = MinMax::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
@@ -163,22 +166,20 @@ impl<'draw> DNAContext<'draw> {
         let offset = gen
             .brushes
             .iter()
-            .map(|b| (b.width().max(b.height()) as f32 * max_size_bruches) as u32)
+            .map(|b| (b.width().max(b.height()) as f32 * max_size_bruches))
             .max_by(|i, j| i.partial_cmp(j).unwrap())
             .unwrap();
+        let offset = (offset * 0.5) as i32;
 
         // Create a bigger image for easier spatting
-        let mut image = image::DynamicImage::new_luma8(
-            gen.img_grey.width() + 2 * offset,
-            gen.img_grey.height() + 2 * offset,
-        ).into_luma();
+        let mut image =
+            image::DynamicImage::new_luma8(gen.img_grey.width(), gen.img_grey.height()).into_luma();
         if let Some(prev_image) = prev_image {
             // If provided, initialize with previous iteration
-            for x in 0..prev_image.width() {
-                for y in 0..prev_image.height() {
-                    image.get_pixel_mut(x+offset, y+offset)[0] = prev_image.get_pixel(x, y)[0];
-                }
-            }
+            image
+                .pixels_mut()
+                .zip(prev_image.pixels())
+                .for_each(|(p0, p1)| p0[0] = p1[0]);
         }
         let org_image = image.clone();
 
@@ -189,6 +190,7 @@ impl<'draw> DNAContext<'draw> {
                     rng,
                     &strokes_scales,
                     (image.width(), image.height()),
+                    offset,
                     gen.brushes.len(),
                 )
             })
@@ -211,7 +213,7 @@ impl<'draw> DNAContext<'draw> {
     }
 
     pub fn iterate(&mut self, number_iter: usize, rng: &mut rand::rngs::ThreadRng) {
-        for _ in 0..number_iter {
+        for _it in 0..number_iter {
             for i in 0..self.strokes.len() {
                 // Clone the original image
                 let mut new_image = self.org_image.clone();
@@ -221,6 +223,7 @@ impl<'draw> DNAContext<'draw> {
                     rng,
                     &self.strokes_scales,
                     (self.image.width(), self.image.height()),
+                    self.offset,
                     self.gen.brushes.len(),
                 );
                 // Update the images with all strokes
@@ -232,8 +235,12 @@ impl<'draw> DNAContext<'draw> {
                 if self.error > new_error {
                     self.error = new_error;
                     self.strokes = new_strokes;
+                    self.image = new_image;
                 }
             }
+            // DEBUG
+            // dbg!(self.error);
+            // self.image.save(&format!("{}.png", _it)).unwrap();
         }
     }
 
@@ -242,31 +249,14 @@ impl<'draw> DNAContext<'draw> {
     }
 
     pub fn to_image(self) -> GrayImage {
-        let mut image =
-            image::DynamicImage::new_luma8(self.gen.img_grey.width(), self.gen.img_grey.height())
-                .into_luma();
-        for x in 0..image.width() {
-            for y in 0..image.height() {
-                image.get_pixel_mut(x, y)[0] =
-                    self.image.get_pixel(x + self.offset, y + self.offset)[0];
-            }
-        }
-        image
+        self.image
     }
 
     fn compute_error(&self, image: &GrayImage) -> f32 {
-        assert_eq!(image.width(), self.gen.img_grey.width() + 2 * self.offset);
-        assert_eq!(image.height(), self.gen.img_grey.height() + 2 * self.offset);
-        // The image is bigger (offset)
-        let mut diff: f32 = 0.0;
-        for x in 0..self.gen.img_grey.width() {
-            for y in 0..self.gen.img_grey.height() {
-                let p_diff = self.gen.img_grey.get_pixel(x, y)[0] as f32
-                    - image.get_pixel(x + self.offset, y + self.offset)[0] as f32;
-                diff += p_diff.abs();
-            }
-        }
-        diff
+        image.pixels().zip(self.gen.img_grey.pixels()).map( |(p0, p1)| {
+            let p_diff = p0[0] as f32 - p1[0] as f32;
+            p_diff.abs() / 255.0
+        }).sum()
     }
 }
 
@@ -275,7 +265,7 @@ impl<'draw> DNAContext<'draw> {
 pub struct Stroke {
     pub value: f32,
     pub size: f32,
-    pub pos: (u32, u32),
+    pub pos: (i32, i32),
     pub rotation: f32,
     pub brush_id: usize,
 }
@@ -285,12 +275,16 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &MinMax,
         img_size: (u32, u32),
+        offset: i32,
         nb_bruches: usize,
     ) -> Stroke {
         let value = rng.gen_range(0.0, 1.0);
         let size = scale.value(rng.gen_range(0.0, 1.0));
         // TODO: use mask
-        let pos = (rng.gen_range(0, img_size.0), rng.gen_range(0, img_size.1));
+        let pos = (
+            rng.gen_range(-offset, img_size.0 as i32 + offset),
+            rng.gen_range(-offset, img_size.1 as i32 + offset),
+        );
         // TODO: random rotation for now
         let rotation = rng.gen_range(0.0, 360.0);
         let brush_id = rng.gen_range(0, nb_bruches);
@@ -308,22 +302,26 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &MinMax,
         img_size: (u32, u32),
+        offset: i32,
         nb_bruches: usize,
     ) -> Stroke {
-        let mut mutations = vec![0, 1, 2, 3, 4, 5];
+        let mut mutations = vec![0, 1, 2, 3, 4];
         mutations.shuffle(rng);
-        let nb_mutations = rng.gen_range(0, mutations.len());
+        let nb_mutations = rng.gen_range(1, mutations.len()+1);
 
         let mut new_stroke = self.clone();
         for i in 0..nb_mutations {
             match mutations[i] {
-                0 => new_stroke.value = rng.gen_range(0.0, 1.0),
+                0 => new_stroke.value = rng.gen_range(0, 2) as f32,
                 1 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
-                2 | 3 => {
-                    new_stroke.pos = (rng.gen_range(0, img_size.0), rng.gen_range(0, img_size.1))
+                2 => {
+                    new_stroke.pos = (
+                        rng.gen_range(-offset, img_size.0 as i32 + offset),
+                        rng.gen_range(-offset, img_size.1 as i32 + offset),
+                    )
                 }
-                4 => new_stroke.rotation = rng.gen_range(0.0, 360.0),
-                5 => new_stroke.brush_id = rng.gen_range(0, nb_bruches),
+                3 => new_stroke.rotation = rng.gen_range(0.0, 360.0),
+                4 => new_stroke.brush_id = rng.gen_range(0, nb_bruches),
                 _ => panic!("Not covered mutation approach"),
             };
         }

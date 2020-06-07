@@ -6,7 +6,7 @@ fn main() {
     let mut rng = thread_rng();
 
     // Print text to the console
-    let mut gen = genetic_drawing_rust::GeneticDrawing::load("./data/linear.jpg");
+    let mut gen = genetic_drawing_rust::GeneticDrawing::load("./data/example.jpg");
     gen.img_gradient.angle.to_image().save("ang.png").unwrap();
     gen.img_gradient.mag.to_image().save("mag.png").unwrap();
 
@@ -15,13 +15,19 @@ fn main() {
     for i in 0..4 {
         gen.register_brush(&format!("./brushes/watercolor/{}.jpg",i+1));
     }
+
+    // Brushes dumps
+    for i in 0..gen.brushes.len() {
+        gen.brushes[i].save(&format!("b_{}.png", i)).unwrap();
+    }
+
     println!("DNA...");
     let mut images = vec![];
-    const NB_ITER: usize = 1;
+    const NB_ITER: usize = 100;
     for i in 0..NB_ITER {
         print!(" - {} ... ", i);
         let mut dna = genetic_drawing_rust::DNAContext::new(&gen, 10, &mut rng, i as f32 / NB_ITER as f32, images.last());
-        dna.iterate(0, &mut rng);
+        dna.iterate(30, &mut rng);
         println!("{}", dna.error());
         images.push(dna.to_image());
         images.last().unwrap().save(&format!("test_{}.png", i)).unwrap();   
