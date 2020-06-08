@@ -1,10 +1,12 @@
 [package]
-name = "genetic-drawing"
+name = "cli"
 version = "0.1.0"
 authors = ["beltegeuse <adrien.gruson@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-image = "*"
-imageproc = "*"
+clap = "*"
+genetic-drawing = { path = "../../" }
 rand = "*"
+image = "*"
+pbr = "*"

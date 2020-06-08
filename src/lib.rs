@@ -28,12 +28,6 @@ impl FloatImage {
     }
 }
 
-// Simple CDF
-// Can be loaded from image or can be automatic
-// When automatic, the image get blured.
-// starting after some percent (20%) in the orginal code
-// then use some ramping to get a "t" value.
-// Then use a guassian based on some percent
 pub struct Distribution {
     pub values: Vec<f32>,
     pub width: u32,
@@ -81,8 +75,8 @@ impl Distribution {
             Err(x) => x - 1,
         };
 
-        let x = id as u32 / self.height;
-        let y = id as u32 % self.height;
+        let y = id as u32 / self.width;
+        let x = id as u32 % self.width;
         (x, y)
     }
 
@@ -96,8 +90,8 @@ impl Distribution {
 }
 
 pub struct GradientImage {
-    mag: FloatImage,
-    angle: FloatImage,
+    pub mag: FloatImage,
+    pub angle: FloatImage,
 }
 
 impl GradientImage {
@@ -158,18 +152,18 @@ impl GradientImage {
     }
 }
 
-pub struct MinMax {
+pub struct ScaleRange {
     pub min: f32,
     pub max: f32,
 }
-impl MinMax {
+impl ScaleRange {
     pub fn value(&self, t: f32) -> f32 {
         assert!(t >= 0.0 && t <= 1.0);
         (self.max - self.min) * t + self.min
     }
-    pub fn mix(begin: &MinMax, end: &MinMax, time: f32) -> Self {
+    pub fn mix(begin: &ScaleRange, end: &ScaleRange, time: f32) -> Self {
         assert!(time >= 0.0 && time <= 1.0);
-        Self {
+        ScaleRange {
             min: end.min * time + begin.min * (1.0 - time),
             max: end.max * time + begin.max * (1.0 - time),
         }
@@ -179,7 +173,7 @@ impl MinMax {
 pub struct GeneticDrawing {
     pub img_grey: GrayImage,
     pub img_gradient: GradientImage,
-    pub bruch_range: (MinMax, MinMax),
+    pub bruch_range: (ScaleRange, ScaleRange),
     pub brushes: Vec<GrayAlphaImage>,
 }
 
@@ -191,7 +185,7 @@ impl GeneticDrawing {
         Self {
             img_grey,
             img_gradient,
-            bruch_range: (MinMax { min: 0.3, max: 0.7 }, MinMax { min: 0.1, max: 0.3 }),
+            bruch_range: (ScaleRange { min: 0.3, max: 0.7 }, ScaleRange { min: 0.1, max: 0.3 }),
             brushes: vec![],
         }
     }
@@ -216,7 +210,7 @@ pub struct DNAContext<'draw, 'cdf> {
     org_image: GrayImage,
     pub image: GrayImage,
     strokes: Vec<Stroke>,
-    strokes_scales: MinMax,
+    strokes_scales: ScaleRange,
     error: f32,
     pub gen: &'draw GeneticDrawing,
     pub pos_cdf: Option<&'cdf Distribution>,
@@ -252,7 +246,7 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
         pos_cdf: Option<&'cdf Distribution>,
     ) -> Self {
         // Compute the max size bruches
-        let strokes_scales = MinMax::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
+        let strokes_scales = ScaleRange::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
         
         // Create a bigger image for easier spatting
         let mut image =
@@ -397,7 +391,7 @@ impl Stroke {
 
     pub fn new(
         rng: &mut rand::rngs::ThreadRng,
-        scale: &MinMax,
+        scale: &ScaleRange,
         img_size: (u32, u32),
         brushes: &Vec<GrayAlphaImage>,
         grads: Option<&GradientImage>,
@@ -425,7 +419,7 @@ impl Stroke {
     pub fn mutate(
         &self,
         rng: &mut rand::rngs::ThreadRng,
-        scale: &MinMax,
+        scale: &ScaleRange,
         img_size: (u32, u32),
         brushes: &Vec<GrayAlphaImage>,
         grads: Option<&GradientImage>,
@@ -440,7 +434,7 @@ impl Stroke {
         let mut new_stroke = self.clone();
         for m in mutations {
             match m {
-                0 => new_stroke.value = rng.gen_range(0, 2) as f32,
+                0 => new_stroke.value = rng.gen_range(0.0, 1.0),
                 1 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
                 2 => new_stroke.pos = Stroke::gen_position(rng, img_size, cdf),
                 3 => new_stroke.rotation = self.gen_rotation(rng, grads),
