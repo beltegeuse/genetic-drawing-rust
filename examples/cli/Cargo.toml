@@ -10,3 +10,7 @@ genetic-drawing = { path = "../../" }
 rand = "*"
 image = "*"
 pbr = "*"
+
+# For flamegraph (r)
+[profile.release]
+debug = true
