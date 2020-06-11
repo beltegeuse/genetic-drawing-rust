@@ -81,62 +81,74 @@ fn main() {
         .about("Optimize drawings")
         .arg(
             Arg::with_name("input")
-                .help("Image to optimize")
+                .help("input image to optimize [required]")
                 .short("i")
                 .required(true)
                 .takes_value(true),
         )
         .arg(
             Arg::with_name("output")
-                .help("Path output final image")
+                .help("output final image [required]")
                 .short("o")
                 .required(true)
                 .takes_value(true),
         )
         .arg(
             Arg::with_name("scale_begin")
+                .help("the brush scale at the first iteration")
                 .short("0")
                 .takes_value(true)
                 .default_value("0.3:0.7"),
         )
         .arg(
             Arg::with_name("scale_end")
+                .help("the brush scale at the last iteration")
                 .short("1")
                 .takes_value(true)
                 .default_value("0.1:0.3"),
         )
         .arg(
             Arg::with_name("iter")
+                .help("number of iterations")
                 .short("t")
                 .takes_value(true)
                 .default_value("100"),
         )
         .arg(
             Arg::with_name("strokes")
+                .help("number of stroke that we consider each iteration")
                 .short("s")
                 .takes_value(true)
                 .default_value("10"),
         )
         .arg(
             Arg::with_name("generation")
+                .help("number of generations (balance computation speed and stroke quality)")
                 .takes_value(true)
                 .short("g")
                 .default_value("30"),
         )
         .arg(
             Arg::with_name("dist")
+                .help("position distribution (uniform, gradient[:time_offset], image:path)")
                 .takes_value(true)
                 .short("d")
                 .default_value("uniform"),
         )
         .arg(
             Arg::with_name("brush")
+                .help("path to brush image (can be specified multiple times) [required]")
                 .short("b")
                 .takes_value(true)
                 .required(true)
                 .multiple(true),
         )
-        .arg(Arg::with_name("last").short("l").takes_value(true))
+        .arg(
+            Arg::with_name("last")
+                .help("previous generated image (usefull for multipass drawing) [optional]")
+                .short("l")
+                .takes_value(true),
+        )
         .get_matches();
 
     let now = std::time::Instant::now();
@@ -147,10 +159,17 @@ fn main() {
     // Generate the main object & Register brushes
     let filename_out = value_t_or_exit!(matches.value_of("output"), String);
     let filename = value_t_or_exit!(matches.value_of("input"), String);
-    let mut gen = genetic_drawing::GeneticDrawing::load(&filename);
+    let img = image::open(&filename).expect(&format!("Impossible to open {}", filename));
+    let mut gen = genetic_drawing::GeneticDrawing::load(img);
     let brushes = values_t_or_exit!(matches.values_of("brush"), String);
+    if brushes.is_empty() {
+        // Note that this error message might be not necessary
+        // as the mark brush argument as mandantory
+        panic!("You need to specify at least one brush image (via -b)");
+    }
     for b in brushes {
-        gen.register_brush(&b);
+        let img = image::open(&b).expect(&format!("Impossible to open {}", b));
+        gen.register_brush(img);
     }
 
     // Brushes range

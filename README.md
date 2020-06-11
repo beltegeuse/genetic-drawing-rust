@@ -16,16 +16,16 @@ FLAGS:
     -V, --version    Prints version information
 
 OPTIONS:
-    -b <brush>...           
-    -d <dist>                [default: uniform]
-    -g <generation>          [default: 30]
-    -i <input>              Image to optimize
-    -t <iter>                [default: 100]
-    -l <last>               
-    -o <output>             Path output final image
-    -0 <scale_begin>         [default: 0.3:0.7]
-    -1 <scale_end>           [default: 0.1:0.3]
-    -s <strokes>             [default: 10]
+    -b <brush>...           path to brush image (can be specified multiple times) [required]
+    -d <dist>               position distribution (uniform, gradient[:time_offset], image:path) [default: uniform]
+    -g <generation>         number of generations (balance computation speed and stroke quality) [default: 30]
+    -i <input>              input image to optimize [required]
+    -t <iter>               number of iterations [default: 100]
+    -l <last>               previous generated image (usefull for multipass drawing) [optional]
+    -o <output>             output final image [required]
+    -0 <scale_begin>        the brush scale at the first iteration [default: 0.3:0.7]
+    -1 <scale_end>          the brush scale at the last iteration [default: 0.1:0.3]
+    -s <strokes>            number of stroke that we consider each iteration [default: 10]
 ```
 
 ## Example
@@ -62,11 +62,8 @@ All the dependencies will be installed by cargo. You need to have rust installed
 
 ## TODO
 
-- Make more user-friendly error/instruction for command line tool
-- More control on `gradient` distribution
-- Properly documenting the code
 - Support color images
-- Profiling and optimize code
+- Profiling and optimize code (webgpu? multi-thread implementation?)
 - WASM client
-
-
+- Make more friendly panic message
+- Add documentation for the cli interface

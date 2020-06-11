@@ -214,9 +214,9 @@ pub struct GeneticDrawing {
 }
 
 impl GeneticDrawing {
-    pub fn load(filename: &str) -> Self {
+    pub fn load(img: DynamicImage) -> Self {
         // Load image
-        let img_grey = image::open(filename).unwrap().into_luma();
+        let img_grey = img.into_luma();
         let img_gradient = GradientImage::new(&img_grey);
         Self {
             img_grey,
@@ -230,8 +230,8 @@ impl GeneticDrawing {
         }
     }
 
-    pub fn register_brush(&mut self, filename: &str) {
-        let mut img_grey = image::open(filename).unwrap().into_luma_alpha();
+    pub fn register_brush(&mut self, img: DynamicImage) {
+        let mut img_grey = img.into_luma_alpha();
         img_grey.pixels_mut().for_each(|p| {
             if p[0] == 0 {
                 p[1] = 0;
