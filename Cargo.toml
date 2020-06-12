@@ -8,3 +8,4 @@ edition = "2018"
 image = { version = "*", features = ["gif", "jpeg", "ico", "png", "pnm", "tga", "tiff", "webp", "bmp", "hdr", "dxt", "dds", "farbfeld"] }
 imageproc = "*"
 rand = "*"
+rayon = "*"

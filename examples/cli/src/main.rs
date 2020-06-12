@@ -7,16 +7,16 @@ use rand::prelude::*;
 enum DistType {
     Uniform,
     Image {
-        distribution: genetic_drawing::Distribution,
+        distribution: genetic_drawing::ImageDistribution,
     },
     Gradient {
         original_image: image::DynamicImage,
-        cached_distribution: Option<genetic_drawing::Distribution>,
+        cached_distribution: Option<genetic_drawing::ImageDistribution>,
         time_offset: Option<f32>,
     },
 }
 impl DistType {
-    fn get(&self) -> Option<&genetic_drawing::Distribution> {
+    fn get(&self) -> Option<&genetic_drawing::ImageDistribution> {
         match self {
             DistType::Uniform => None,
             DistType::Image { distribution } => Some(distribution),
@@ -38,7 +38,7 @@ impl DistType {
                     Some(ref v) => (v + (1.0 - v) * iter as f32) / nb_iter as f32,
                 };
                 let t = (1.0 - scale).powi(2) * 0.25 + 0.005;
-                (*cached_distribution) = Some(genetic_drawing::Distribution::from_gradients(
+                (*cached_distribution) = Some(genetic_drawing::ImageDistribution::from_gradients(
                     original_image,
                     t,
                 ));
@@ -199,7 +199,7 @@ fn main() {
                 .expect(&format!("impossible to open {}", v))
                 .to_luma();
             DistType::Image {
-                distribution: genetic_drawing::Distribution::from_image(&dist),
+                distribution: genetic_drawing::ImageDistribution::from_image(&dist),
             }
         }
         ["gradient"] => {

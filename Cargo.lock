@@ -146,6 +146,7 @@ dependencies = [
  "image",
  "imageproc",
  "rand",
+ "rayon",
 ]
 
 [[package]]
