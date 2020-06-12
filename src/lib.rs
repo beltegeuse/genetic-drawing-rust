@@ -1,7 +1,8 @@
 use image::{DynamicImage, GenericImage, Pixel};
-use imageproc;
 use imageproc::geometric_transformations::*;
 use rand::prelude::*;
+use rand::distributions::Distribution;
+use rayon::prelude::*;
 
 /// Supported image type
 #[derive(Clone)]
@@ -78,6 +79,24 @@ impl Image {
         }
     }
 
+    pub fn get_pixel_value(&self, x: i32, y: i32) -> StrokeColor {
+        let x = x.max(0).min(self.width() as i32) as u32;
+        let y = y.max(0).min(self.height() as i32) as u32;
+        match self {
+            Image::Gray(v) => {
+                StrokeColor::Gray(v.get_pixel(x, y)[0] as f32 / 255.0)
+            }
+            Image::Color(v) => {
+                let p = v.get_pixel(x, y);
+                StrokeColor::Color(
+                    p[0] as f32 / 255.0,
+                    p[1] as f32 / 255.0,
+                    p[2] as f32 / 255.0,
+                )
+            }
+        }
+    }
+
     /// Custom function to blend a brush (img) inside the main image
     /// It safe function, meaning if all the brush pixels are not inside the main image
     /// the method we will not crash
@@ -92,7 +111,6 @@ impl Image {
 
         let dest_width = self.width() as i32;
         let dest_height = self.height() as i32;
-
         for y in 0..img.height() {
             for x in 0..img.width() {
                 let x_dest = x as i32 + xoff;
@@ -184,15 +202,15 @@ impl FloatImage {
 
 /// Structure to store a CDF of image values (via FloatImage)
 /// This structure is used to model custom distribution on image-space
-pub struct Distribution {
+pub struct ImageDistribution {
     pub values: Vec<f32>,
     pub width: u32,
     pub height: u32,
 }
 
-impl Distribution {
+impl ImageDistribution {
     /// Constructor that takes a grayimage and compute its associated CDF
-    pub fn from_image(img: &image::GrayImage) -> Distribution {
+    pub fn from_image(img: &image::GrayImage) -> ImageDistribution {
         // Create the new CDF
         let mut cdf = Vec::with_capacity((img.width() * img.height()) as usize + 1);
         let mut cur = 0.0;
@@ -205,7 +223,7 @@ impl Distribution {
         // Normalize the cdf
         cdf.iter_mut().for_each(|x| *x /= cur);
 
-        Distribution {
+        ImageDistribution {
             values: cdf,
             width: img.width(),
             height: img.height(),
@@ -215,7 +233,7 @@ impl Distribution {
     /// Constructor that uses gradient magnitude float map to compute the CDF
     /// Note that the gradient information get filter with a gaussian kernel
     /// before building the CDF
-    pub fn from_gradients(image: &DynamicImage, gaussian_size: f32) -> Distribution {
+    pub fn from_gradients(image: &DynamicImage, gaussian_size: f32) -> ImageDistribution {
         // Compute gradient
         let img = image.to_luma();
         let gaussian_size = img.width() as f32 * gaussian_size;
@@ -409,7 +427,7 @@ pub struct DNAContext<'draw, 'cdf> {
     pub gen: &'draw GeneticDrawing,
     /// The image distribution if provided.
     /// If missing, we use a uniform distribution to generate brush position.
-    pub pos_cdf: Option<&'cdf Distribution>,
+    pub pos_cdf: Option<&'cdf ImageDistribution>,
 }
 
 impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
@@ -419,7 +437,7 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
         rng: &mut rand::rngs::ThreadRng,
         time: f32,
         prev_image: Option<&Image>,
-        pos_cdf: Option<&'cdf Distribution>,
+        pos_cdf: Option<&'cdf ImageDistribution>,
     ) -> Self {
         // Compute the max size bruches
         let strokes_scales = ScaleRange::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
@@ -444,7 +462,7 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                     &gen.brushes,
                     Some(&gen.img_gradient),
                     pos_cdf,
-                    image.is_color(),
+                    &gen.img,
                 )
             })
             .collect::<Vec<_>>();
@@ -485,7 +503,7 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                     &self.gen.brushes,
                     Some(&self.gen.img_gradient),
                     self.pos_cdf,
-                    self.image.is_color(),
+                    &self.gen.img
                 );
 
                 // Update the images with all strokes (except the new one)
@@ -526,24 +544,25 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
         // There is two case (color image or not)
         match (&self.gen.img, image) {
             (Image::Gray(v0), Image::Gray(v1)) => {
-                v0
-                .pixels()
-                .zip(v1.pixels())
-                .map(|(p0, p1)| {
-                    let p_diff = p0[0] as f32 - p1[0] as f32;
+                let p0 = v0.as_ref();
+                let p1 = v1.as_ref();
+                let iter = p0.par_iter().zip(p1.par_iter());
+                iter.map(|(p0, p1)| {
+                    let p_diff = *p0 as f32 - *p1 as f32;
                     p_diff.abs() / 255.0
                 })
                 .sum()
             }
             (Image::Color(v0), Image::Color(v1)) => {
-                v0
-                .pixels()
-                .zip(v1.pixels())
-                .map(|(p0, p1)| {
+                let p0 = v0.as_ref();
+                let p1 = v1.as_ref();
+                let iter = p0.par_chunks(3).zip(p1.par_chunks(3));
+                iter.map(|(p0, p1)| {
                     let p_diff_r = p0[0] as f32 - p1[0] as f32;
                     let p_diff_g = p0[1] as f32 - p1[1] as f32;
                     let p_diff_b = p0[2] as f32 - p1[2] as f32;
-                    let p_diff = p_diff_r + p_diff_g + p_diff_b;
+                    let p_diff = p_diff_r.abs() + p_diff_g.abs() + p_diff_b.abs(); 
+                    //p_diff_r.abs().max(p_diff_g.abs()).max(p_diff_b.abs());
                     p_diff.abs() / 255.0
                 })
                 .sum()
@@ -559,12 +578,44 @@ pub enum StrokeColor {
     Color(f32, f32, f32)
 }
 
+fn ensure_range(v: f32) -> f32 {
+    if v < 0.0 {
+        v + 1.0
+    } else if v >= 1.0 {
+        v - 1.0
+    } else {
+        v
+    }
+}
+
 impl StrokeColor {
+    // Uniform color sampling
     pub fn from_rng(color: bool, rng: &mut rand::rngs::ThreadRng) -> StrokeColor {
         if color {
             StrokeColor::Color(rng.gen_range(0.0, 1.0), rng.gen_range(0.0, 1.0), rng.gen_range(0.0, 1.0))
         } else {
             StrokeColor::Gray(rng.gen_range(0.0, 1.0))
+        }
+    }
+
+    // Use a gaussian sampling center to the pixel color
+    pub fn gaussian_rng(rng: &mut rand::rngs::ThreadRng, target: &Image, pos: (i32, i32)) -> StrokeColor {
+        let s = target.get_pixel_value(pos.0, pos.1);
+        let normal = rand::distributions::Normal::new(0.0, 0.2);
+        match s {
+            StrokeColor::Color(r, g, b) => {
+                StrokeColor::Color(
+                    ensure_range(r + normal.sample(rng) as f32),
+                    ensure_range(g + normal.sample(rng) as f32),
+                    ensure_range(b + normal.sample(rng) as f32),
+                )
+            }
+            StrokeColor::Gray(v) => {
+                StrokeColor::Gray(
+                    ensure_range(v + normal.sample(rng) as f32),
+                )
+            }
+            
         }
     }
 
@@ -577,13 +628,19 @@ impl StrokeColor {
     }
 }
 
+#[derive(Clone)]
+pub struct BrushEntry {
+    id: usize,
+    width: u32,
+    height: u32,
+}
 /// Represent a stroke
 pub struct Stroke {
     pub value: StrokeColor,
     pub size: f32,
     pub pos: (i32, i32),
     pub rotation: f32,
-    pub brush_id: usize,
+    pub brush: BrushEntry,
     /// We keep a image of the stroke as a cache value
     /// This avoid to recompute the transformation during the optimization procedure
     pub raster: Option<ImageAlpha>,
@@ -598,7 +655,8 @@ impl Stroke {
             None => rng.gen_range(0.0, 360.0),
             Some(ref v) => {
                 // We favor stroke that follows the gradients
-                let (mag, angle) = v.get_safe(self.pos.0, self.pos.1);
+                let pos = self.get_position();
+                let (mag, angle) = v.get_safe(pos.0, pos.1);
                 let angle = angle + 90.0;
                 rng.gen_range(-180.0, 180.0) * (1.0 - mag) + angle
             }
@@ -611,7 +669,7 @@ impl Stroke {
     fn gen_position(
         rng: &mut rand::rngs::ThreadRng,
         img_size: (u32, u32),
-        cdf: Option<&Distribution>,
+        cdf: Option<&ImageDistribution>,
     ) -> (i32, i32) {
         match cdf {
             None => (
@@ -631,26 +689,33 @@ impl Stroke {
         img_size: (u32, u32),
         brushes: &Vec<image::GrayAlphaImage>,
         grads: Option<&GradientImage>,
-        cdf: Option<&Distribution>,
-        color: bool
+        cdf: Option<&ImageDistribution>,
+        target_img: &Image,
     ) -> Stroke {
-        let value = StrokeColor::from_rng(color, rng);
+        let value = StrokeColor::from_rng(target_img.is_color(), rng);
         let size = scale.value(rng.gen_range(0.0, 1.0));
         let pos = Stroke::gen_position(rng, img_size, cdf);
         let rotation = rng.gen_range(0.0, 360.0);
-        let brush_id = rng.gen_range(0, brushes.len());
+        let brush = {
+            let id = rng.gen_range(0, brushes.len());
+            BrushEntry { id, 
+                width: brushes[id].width(),
+                height: brushes[id].height()
+            } 
+        };
         // Update the rotation
         let mut s = Stroke {
             value,
             size,
             pos,
             rotation,
-            brush_id,
+            brush,
             raster: None,
         };
         // This is a bit ugly but we need to know the
-        // stroke position to generate a rotation (if gradient are provided)
+        // stroke position, scale, brush to generate a rotation (if gradient are provided)
         s.rotation = s.gen_rotation(rng, grads);
+        s.value = StrokeColor::gaussian_rng(rng, target_img, s.get_position());
         // Caching the rasterized stroke
         s.raster = Some(s.draw(brushes));
         s
@@ -663,8 +728,8 @@ impl Stroke {
         img_size: (u32, u32),
         brushes: &Vec<image::GrayAlphaImage>,
         grads: Option<&GradientImage>,
-        cdf: Option<&Distribution>,
-        color: bool,
+        cdf: Option<&ImageDistribution>,
+        target_img: &Image,
     ) -> Stroke {
         // We only mutate few parameter of a stroke
         // as genetic algorithm does
@@ -684,16 +749,23 @@ impl Stroke {
             size: self.size,
             pos: self.pos,
             rotation: self.rotation,
-            brush_id: self.brush_id,
+            brush: self.brush.clone(),
             raster: None
         };
         for m in mutations {
             match m {
-                0 => new_stroke.value = StrokeColor::from_rng(color, rng),
-                1 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
-                2 => new_stroke.pos = Stroke::gen_position(rng, img_size, cdf),
+                0 => new_stroke.brush = {
+                    let id = rng.gen_range(0, brushes.len());
+                    BrushEntry { id, 
+                        width: brushes[id].width(),
+                        height: brushes[id].height()
+                    }
+                },
+                1 => new_stroke.pos = Stroke::gen_position(rng, img_size, cdf),
+                2 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
+                // Rotation and values depends of position, brush and scale
                 3 => new_stroke.rotation = self.gen_rotation(rng, grads),
-                4 => new_stroke.brush_id = rng.gen_range(0, brushes.len()),
+                4 => new_stroke.value = StrokeColor::gaussian_rng(rng, target_img, new_stroke.get_position()),
                 _ => panic!("Not covered mutation approach"),
             };
         }
@@ -702,16 +774,15 @@ impl Stroke {
     }
 
     pub fn get_position(&self) -> (i32, i32) {
-        let r = self.raster.as_ref().unwrap();
         (
-            self.pos.0 - (r.width() as f32 * 0.5) as i32,
-            self.pos.1 - (r.height() as f32 * 0.5) as i32,
+            self.pos.0 - (self.brush.width as f32 * 0.5 * self.size) as i32,
+            self.pos.1 - (self.brush.height as f32 * 0.5 * self.size) as i32,
         )
     }
 
     fn draw(&self, brushes: &Vec<image::GrayAlphaImage>) -> ImageAlpha {
         // Compute the affine transformation
-        let b = &brushes[self.brush_id];
+        let b = &brushes[self.brush.id];
         let trans = Projection::translate(b.width() as f32 * 0.5, b.height() as f32 * 0.5)
             * Projection::rotate(self.rotation.to_radians())
             * Projection::scale(self.size, self.size);
