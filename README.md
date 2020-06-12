@@ -9,9 +9,10 @@ Genetic Drawing 0.1
 Optimize drawings
 
 USAGE:
-    cli [OPTIONS] -b <brush>... -i <input> -o <output>
+    cli [FLAGS] [OPTIONS] -b <brush>... -i <input> -o <output>
 
 FLAGS:
+    -c               generate color image
     -h, --help       Prints help information
     -V, --version    Prints version information
 
@@ -62,7 +63,6 @@ All the dependencies will be installed by cargo. You need to have rust installed
 
 ## TODO
 
-- Support color images
 - Profiling and optimize code (webgpu? multi-thread implementation?)
 - WASM client
 - Make more friendly panic message

@@ -1,7 +1,157 @@
-use image::{DynamicImage, GenericImage, GrayAlphaImage, GrayImage, Pixel};
+use image::{DynamicImage, GenericImage, Pixel};
 use imageproc;
 use imageproc::geometric_transformations::*;
 use rand::prelude::*;
+
+/// Supported image type
+#[derive(Clone)]
+pub enum Image {
+    Gray(image::GrayImage),
+    Color(image::RgbImage)
+}
+impl Image {
+    pub fn zeros_like(img: &Image) -> Image {
+        match img {
+            Image::Gray(v) => Image::Gray(image::GrayImage::new(v.width(), v.height())),
+            Image::Color(v) => {
+                Image::Color(
+                    image::RgbImage::new(v.width(), v.height())
+                )
+            }
+        }
+    }
+
+    pub fn as_dynamic_image(self) -> image::DynamicImage {
+        match self {
+            Image::Gray(v) => image::DynamicImage::ImageLuma8(v),
+            Image::Color(v) => image::DynamicImage::ImageRgb8(v),
+        }
+    }
+
+    pub fn to_gray(&self) -> image::GrayImage {
+        match self {
+            Image::Gray(v) => v.clone(),
+            Image::Color(v) => DynamicImage::ImageRgb8(v.clone()).into_luma(),
+        }
+    }
+
+    pub fn copy_from(&mut self, img: &Image) {
+        match (self, img) {
+            (Image::Gray(v0), Image::Gray(v1)) => {
+                v0
+                .pixels_mut()
+                .zip(v1.pixels())
+                .for_each(|(p0, p1)| p0[0] = p1[0]);
+            }
+            (Image::Color(v0), Image::Color(v1)) => {
+                v0
+                .pixels_mut()
+                .zip(v1.pixels())
+                .for_each(|(p0, p1)| {
+                    p0[0] = p1[0];
+                    p0[1] = p1[1];
+                    p0[2] = p1[2];
+                });
+            }
+            _ => panic!("Impossible to copy from (different image type)")
+        }
+    }
+
+    pub fn width(&self) -> u32 {
+        match self {
+            Image::Gray(v) => v.width(),
+            Image::Color(v) => v.width()
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        match self {
+            Image::Gray(v) => v.height(),
+            Image::Color(v) => v.height()
+        }
+    }
+
+    pub fn is_color(&self) -> bool {
+        match self {
+            Image::Gray(_) => false,
+            Image::Color(_) => true
+        }
+    }
+
+    /// Custom function to blend a brush (img) inside the main image
+    /// It safe function, meaning if all the brush pixels are not inside the main image
+    /// the method we will not crash
+    pub fn splat(&mut self, img: &ImageAlpha, (xoff, yoff): (i32, i32)) {
+        // We check the image compatibility before end
+        // to avoid to do it again and again inside the for loop
+        match (&self, img) {
+            (Image::Gray(_), ImageAlpha::Gray(_)) => {},
+            (Image::Color(_), ImageAlpha::Color(_)) => {},
+            _ => panic!("Incompatible type to splat"),
+        }
+
+        let dest_width = self.width() as i32;
+        let dest_height = self.height() as i32;
+
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let x_dest = x as i32 + xoff;
+                let y_dest = y as i32 + yoff;
+                if x_dest >= 0
+                    && x_dest < dest_width
+                    && y_dest >= 0
+                    && y_dest < dest_height
+                {
+
+                    match self {
+                        Image::Gray(ref mut v0) => {
+                            if let ImageAlpha::Gray(ref v1) = img {
+                                let porg = v1.get_pixel(x, y);
+                                let alpha = porg[1] as f32 / 255.0;
+                                let pdest = v0.get_pixel_mut(x_dest as u32, y_dest as u32);
+                                pdest[0] = (alpha * porg[0] as f32 + (1.0 - alpha) * pdest[0] as f32) as u8;
+                            }
+                        },
+                        Image::Color(ref mut v0) => {
+                            if let ImageAlpha::Color(ref v1) = img {
+                                let porg = v1.get_pixel(x, y);
+                                let alpha = porg[3] as f32 / 255.0;
+                                let pdest = v0.get_pixel_mut(x_dest as u32, y_dest as u32);
+                                pdest[0] = (alpha * porg[0] as f32 + (1.0 - alpha) * pdest[0] as f32) as u8;
+                                pdest[1] = (alpha * porg[1] as f32 + (1.0 - alpha) * pdest[1] as f32) as u8;
+                                pdest[2] = (alpha * porg[2] as f32 + (1.0 - alpha) * pdest[2] as f32) as u8;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum ImageAlpha {
+    Gray(image::GrayAlphaImage),
+    Color(image::RgbaImage)
+}
+
+impl ImageAlpha {
+    pub fn width(&self) -> u32 {
+        match self {
+            ImageAlpha::Gray(v) => v.width(),
+            ImageAlpha::Color(v) => v.width()
+        }
+    }
+
+    pub fn height(&self) -> u32 {
+        match self {
+            ImageAlpha::Gray(v) => v.height(),
+            ImageAlpha::Color(v) => v.height()
+        }
+    }
+}
+
+
 
 /// Helper function to transform Vec floats to GrayScale image (image crate)
 fn vec_f32_to_image(values: &Vec<f32>, width: u32, height: u32, scale: f32) -> DynamicImage {
@@ -42,7 +192,7 @@ pub struct Distribution {
 
 impl Distribution {
     /// Constructor that takes a grayimage and compute its associated CDF
-    pub fn from_image(img: &GrayImage) -> Distribution {
+    pub fn from_image(img: &image::GrayImage) -> Distribution {
         // Create the new CDF
         let mut cdf = Vec::with_capacity((img.width() * img.height()) as usize + 1);
         let mut cur = 0.0;
@@ -207,19 +357,20 @@ impl ScaleRange {
 
 /// Structure representing the whole drawing process
 pub struct GeneticDrawing {
-    pub img_grey: GrayImage,
+    pub img: Image,
     pub img_gradient: GradientImage,
     pub bruch_range: (ScaleRange, ScaleRange),
-    pub brushes: Vec<GrayAlphaImage>,
+    // The brush need to be in gray level anyway
+    pub brushes: Vec<image::GrayAlphaImage>,
 }
 
 impl GeneticDrawing {
-    pub fn load(img: DynamicImage) -> Self {
+    pub fn load(img: Image) -> Self {
         // Load image
-        let img_grey = img.into_luma();
+        let img_grey = img.to_gray();
         let img_gradient = GradientImage::new(&img_grey);
         Self {
-            img_grey,
+            img,
             img_gradient,
             // Default parameter from the original repository
             bruch_range: (
@@ -248,8 +399,8 @@ impl GeneticDrawing {
 /// Structure representing one iteration
 /// of the genetic algorithm
 pub struct DNAContext<'draw, 'cdf> {
-    org_image: GrayImage,
-    pub image: GrayImage,
+    org_image: Image,
+    pub image: Image,
     strokes: Vec<Stroke>,
     strokes_scales: ScaleRange,
     error: f32,
@@ -261,48 +412,23 @@ pub struct DNAContext<'draw, 'cdf> {
     pub pos_cdf: Option<&'cdf Distribution>,
 }
 
-/// Custom function to blend a brush (org) inside the main image
-fn blend_alpha(dest: &mut GrayImage, org: &GrayAlphaImage, (xoff, yoff): (i32, i32)) {
-    // Safe version of image blending
-    for x in 0..org.width() {
-        for y in 0..org.height() {
-            let x_dest = x as i32 + xoff;
-            let y_dest = y as i32 + yoff;
-            if x_dest >= 0
-                && x_dest < dest.width() as i32
-                && y_dest >= 0
-                && y_dest < dest.height() as i32
-            {
-                let porg = org.get_pixel(x, y);
-                let alpha = porg[1] as f32 / 255.0;
-                let pdest = dest.get_pixel_mut(x_dest as u32, y_dest as u32);
-                pdest[0] = (alpha * porg[0] as f32 + (1.0 - alpha) * pdest[0] as f32) as u8;
-            }
-        }
-    }
-}
-
 impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
     pub fn new(
         gen: &'draw GeneticDrawing,
         brushcount: usize,
         rng: &mut rand::rngs::ThreadRng,
         time: f32,
-        prev_image: Option<&GrayImage>,
+        prev_image: Option<&Image>,
         pos_cdf: Option<&'cdf Distribution>,
     ) -> Self {
         // Compute the max size bruches
         let strokes_scales = ScaleRange::mix(&gen.bruch_range.0, &gen.bruch_range.1, time);
 
         // Create a image for the splatting
-        let mut image =
-            image::DynamicImage::new_luma8(gen.img_grey.width(), gen.img_grey.height()).into_luma();
+        let mut image = Image::zeros_like(&gen.img); 
         if let Some(prev_image) = prev_image {
             // If provided, initialize with previous iteration
-            image
-                .pixels_mut()
-                .zip(prev_image.pixels())
-                .for_each(|(p0, p1)| p0[0] = p1[0]);
+            image.copy_from(prev_image);
         }
         // We need to keep the original version of the provided initial image
         // as the optimization procedure will write inside the image attribute
@@ -318,11 +444,12 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                     &gen.brushes,
                     Some(&gen.img_gradient),
                     pos_cdf,
+                    image.is_color(),
                 )
             })
             .collect::<Vec<_>>();
         for s in &strokes {
-            blend_alpha(&mut image, &s.draw(&gen.brushes), s.get_position());
+            image.splat(s.raster.as_ref().unwrap(), s.get_position());
         }
 
         // Construct the context
@@ -358,21 +485,21 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
                     &self.gen.brushes,
                     Some(&self.gen.img_gradient),
                     self.pos_cdf,
+                    self.image.is_color(),
                 );
 
                 // Update the images with all strokes (except the new one)
                 for s in 0..self.strokes.len() {
                     if s == i {
                         // In this case, we draw the new stroke
-                        blend_alpha(
-                            &mut new_image,
+                        new_image.splat(
                             new_strokes.raster.as_ref().unwrap(),
                             new_strokes.get_position(),
                         );
                     } else {
                         // Otherwise we draw the normal one
                         let s = &self.strokes[s];
-                        blend_alpha(&mut new_image, s.raster.as_ref().unwrap(), s.get_position());
+                        new_image.splat(s.raster.as_ref().unwrap(), s.get_position());
                     }
                 }
 
@@ -391,33 +518,75 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
         self.error
     }
 
-    pub fn to_image(self) -> GrayImage {
+    pub fn to_image(self) -> Image {
         self.image
     }
 
-    fn compute_error(&self, image: &GrayImage) -> f32 {
-        image
-            .pixels()
-            .zip(self.gen.img_grey.pixels())
-            .map(|(p0, p1)| {
-                let p_diff = p0[0] as f32 - p1[0] as f32;
-                p_diff.abs() / 255.0
-            })
-            .sum()
+    fn compute_error(&self, image: &Image) -> f32 {
+        // There is two case (color image or not)
+        match (&self.gen.img, image) {
+            (Image::Gray(v0), Image::Gray(v1)) => {
+                v0
+                .pixels()
+                .zip(v1.pixels())
+                .map(|(p0, p1)| {
+                    let p_diff = p0[0] as f32 - p1[0] as f32;
+                    p_diff.abs() / 255.0
+                })
+                .sum()
+            }
+            (Image::Color(v0), Image::Color(v1)) => {
+                v0
+                .pixels()
+                .zip(v1.pixels())
+                .map(|(p0, p1)| {
+                    let p_diff_r = p0[0] as f32 - p1[0] as f32;
+                    let p_diff_g = p0[1] as f32 - p1[1] as f32;
+                    let p_diff_b = p0[2] as f32 - p1[2] as f32;
+                    let p_diff = p_diff_r + p_diff_g + p_diff_b;
+                    p_diff.abs() / 255.0
+                })
+                .sum()
+            }
+            _ => panic!("Incompatible image type for computing error")
+        }
+    }
+}
+
+#[derive(Clone)]
+pub enum StrokeColor {
+    Gray(f32),
+    Color(f32, f32, f32)
+}
+
+impl StrokeColor {
+    pub fn from_rng(color: bool, rng: &mut rand::rngs::ThreadRng) -> StrokeColor {
+        if color {
+            StrokeColor::Color(rng.gen_range(0.0, 1.0), rng.gen_range(0.0, 1.0), rng.gen_range(0.0, 1.0))
+        } else {
+            StrokeColor::Gray(rng.gen_range(0.0, 1.0))
+        }
+    }
+
+    pub fn value(color: bool, v: f32) -> StrokeColor {
+        if color {
+            StrokeColor::Color(v,v,v)
+        } else {
+            StrokeColor::Gray(v)
+        }
     }
 }
 
 /// Represent a stroke
-#[derive(Clone, Debug)]
 pub struct Stroke {
-    pub value: f32,
+    pub value: StrokeColor,
     pub size: f32,
     pub pos: (i32, i32),
     pub rotation: f32,
     pub brush_id: usize,
     /// We keep a image of the stroke as a cache value
     /// This avoid to recompute the transformation during the optimization procedure
-    pub raster: Option<GrayAlphaImage>,
+    pub raster: Option<ImageAlpha>,
 }
 
 impl Stroke {
@@ -460,11 +629,12 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &ScaleRange,
         img_size: (u32, u32),
-        brushes: &Vec<GrayAlphaImage>,
+        brushes: &Vec<image::GrayAlphaImage>,
         grads: Option<&GradientImage>,
         cdf: Option<&Distribution>,
+        color: bool
     ) -> Stroke {
-        let value = rng.gen_range(0.0, 1.0);
+        let value = StrokeColor::from_rng(color, rng);
         let size = scale.value(rng.gen_range(0.0, 1.0));
         let pos = Stroke::gen_position(rng, img_size, cdf);
         let rotation = rng.gen_range(0.0, 360.0);
@@ -491,9 +661,10 @@ impl Stroke {
         rng: &mut rand::rngs::ThreadRng,
         scale: &ScaleRange,
         img_size: (u32, u32),
-        brushes: &Vec<GrayAlphaImage>,
+        brushes: &Vec<image::GrayAlphaImage>,
         grads: Option<&GradientImage>,
         cdf: Option<&Distribution>,
+        color: bool,
     ) -> Stroke {
         // We only mutate few parameter of a stroke
         // as genetic algorithm does
@@ -508,10 +679,17 @@ impl Stroke {
         // the mutation that we selected in case this happens.
         mutations.sort();
 
-        let mut new_stroke = self.clone();
+        let mut new_stroke = Stroke {
+            value: self.value.clone(),
+            size: self.size,
+            pos: self.pos,
+            rotation: self.rotation,
+            brush_id: self.brush_id,
+            raster: None
+        };
         for m in mutations {
             match m {
-                0 => new_stroke.value = rng.gen_range(0.0, 1.0),
+                0 => new_stroke.value = StrokeColor::from_rng(color, rng),
                 1 => new_stroke.size = scale.value(rng.gen_range(0.0, 1.0)),
                 2 => new_stroke.pos = Stroke::gen_position(rng, img_size, cdf),
                 3 => new_stroke.rotation = self.gen_rotation(rng, grads),
@@ -520,7 +698,6 @@ impl Stroke {
             };
         }
         new_stroke.raster = Some(new_stroke.draw(brushes));
-
         new_stroke
     }
 
@@ -532,7 +709,7 @@ impl Stroke {
         )
     }
 
-    fn draw(&self, brushes: &Vec<GrayAlphaImage>) -> GrayAlphaImage {
+    fn draw(&self, brushes: &Vec<image::GrayAlphaImage>) -> ImageAlpha {
         // Compute the affine transformation
         let b = &brushes[self.brush_id];
         let trans = Projection::translate(b.width() as f32 * 0.5, b.height() as f32 * 0.5)
@@ -579,10 +756,25 @@ impl Stroke {
             .min(b.width() as f32) as u32;
         let mut b = image::imageops::crop_imm(&b, xmin, ymin, xmax - xmin, ymax - ymin).to_image();
         // Use the stroke color and use alpha of the bruch
-        b.pixels_mut().for_each(|p| {
-            p[1] = p[0];
-            p[0] = (self.value * 255.0) as u8;
-        });
-        b
+
+        match self.value {
+            StrokeColor::Gray(v) => {
+                b.pixels_mut().for_each(|p| {
+                    p[1] = p[0];
+                    p[0] = (v * 255.0) as u8;
+                });
+                ImageAlpha::Gray(b)
+            }
+            StrokeColor::Color(r_v,g_v,b_v) => {
+                let mut b_color = image::RgbaImage::new(b.width(), b.height());
+                b_color.pixels_mut().zip(b.pixels()).for_each(| (p0, p1) | {
+                    p0[3] = p1[0];
+                    p0[0] = (r_v * 255.0) as u8;
+                    p0[1] = (g_v * 255.0) as u8;
+                    p0[2] = (b_v * 255.0) as u8;
+                });
+                ImageAlpha::Color(b_color)
+            }
+        }
     }
 }

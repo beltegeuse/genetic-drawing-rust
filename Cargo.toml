@@ -6,5 +6,5 @@ edition = "2018"
 
 [dependencies]
 image = { version = "*", features = ["gif", "jpeg", "ico", "png", "pnm", "tga", "tiff", "webp", "bmp", "hdr", "dxt", "dds", "farbfeld"] }
-imageproc = { path = "../imageproc" }
+imageproc = "*"
 rand = "*"
