@@ -93,8 +93,8 @@ impl Image {
         let dest_width = self.width() as i32;
         let dest_height = self.height() as i32;
 
-        for x in 0..img.width() {
-            for y in 0..img.height() {
+        for y in 0..img.height() {
+            for x in 0..img.width() {
                 let x_dest = x as i32 + xoff;
                 let y_dest = y as i32 + yoff;
                 if x_dest >= 0
@@ -524,7 +524,7 @@ impl<'draw, 'cdf> DNAContext<'draw, 'cdf> {
 
     fn compute_error(&self, image: &Image) -> f32 {
         // There is two case (color image or not)
-        match (&self.image, image) {
+        match (&self.gen.img, image) {
             (Image::Gray(v0), Image::Gray(v1)) => {
                 v0
                 .pixels()
@@ -567,10 +567,17 @@ impl StrokeColor {
             StrokeColor::Gray(rng.gen_range(0.0, 1.0))
         }
     }
+
+    pub fn value(color: bool, v: f32) -> StrokeColor {
+        if color {
+            StrokeColor::Color(v,v,v)
+        } else {
+            StrokeColor::Gray(v)
+        }
+    }
 }
 
 /// Represent a stroke
-#[derive(Clone)]
 pub struct Stroke {
     pub value: StrokeColor,
     pub size: f32,
@@ -672,7 +679,14 @@ impl Stroke {
         // the mutation that we selected in case this happens.
         mutations.sort();
 
-        let mut new_stroke = self.clone();
+        let mut new_stroke = Stroke {
+            value: self.value.clone(),
+            size: self.size,
+            pos: self.pos,
+            rotation: self.rotation,
+            brush_id: self.brush_id,
+            raster: None
+        };
         for m in mutations {
             match m {
                 0 => new_stroke.value = StrokeColor::from_rng(color, rng),
@@ -684,7 +698,6 @@ impl Stroke {
             };
         }
         new_stroke.raster = Some(new_stroke.draw(brushes));
-
         new_stroke
     }
 
