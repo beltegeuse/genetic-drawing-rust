@@ -149,18 +149,30 @@ fn main() {
                 .short("l")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("color")
+                .help("generate color image")
+                .short("c"),
+        )
         .get_matches();
 
     let now = std::time::Instant::now();
 
     // Create random number
     let mut rng = thread_rng();
+    let with_color = matches.is_present("color");
 
     // Generate the main object & Register brushes
     let filename_out = value_t_or_exit!(matches.value_of("output"), String);
     let filename = value_t_or_exit!(matches.value_of("input"), String);
     let img = image::open(&filename).expect(&format!("Impossible to open {}", filename));
-    let mut gen = genetic_drawing::GeneticDrawing::load(img);
+    let mut gen = {
+        if with_color {
+            genetic_drawing::GeneticDrawing::load(genetic_drawing::Image::Color(img.to_rgb()))
+        } else {
+            genetic_drawing::GeneticDrawing::load(genetic_drawing::Image::Gray(img.to_luma()))
+        }
+    };
     let brushes = values_t_or_exit!(matches.values_of("brush"), String);
     if brushes.is_empty() {
         // Note that this error message might be not necessary
@@ -225,11 +237,15 @@ fn main() {
     // Run
     let mut last_image = match matches.value_of("last") {
         None => None,
-        Some(v) => Some(
-            image::open(v)
-                .expect(&format!("Impossible to open {}", v))
-                .to_luma(),
-        ),
+        Some(v) => {
+            let img =  image::open(v)
+            .expect(&format!("Impossible to open {}", v));
+            if with_color {
+                Some(genetic_drawing::Image::Color(img.to_rgb()))
+            } else {
+                Some(genetic_drawing::Image::Gray(img.to_luma()))
+            }
+         },
     };
     let mut pb = pbr::ProgressBar::new(nb_iter as u64);
     for i in 0..nb_iter {
@@ -248,7 +264,7 @@ fn main() {
     }
 
     if let Some(last_image) = last_image {
-        last_image
+        last_image.as_dynamic_image()
             .save(&filename_out)
             .expect(&format!("Impossible to save {}", filename_out));
     }
