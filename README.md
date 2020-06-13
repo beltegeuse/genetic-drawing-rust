@@ -60,10 +60,17 @@ All the dependencies will be installed by cargo. You need to have rust installed
 - [image](https://crates.io/crates/image): load and write images
 - [imageproc](https://crates.io/crates/imageproc): crate that extends image processing capability (scaling, rotation, gaussian filtering)
 - [rand](https://crates.io/crates/rand): random number generator
+- [rayon](https://github.com/rayon-rs/rayon): Multi-thread support
+
+## Other examples
+
+| <center>Original</center> |  <center>Result</center> |
+| ------------ | ----------- |
+| ![Japan](https://raw.githubusercontent.com/beltegeuse/genetic-drawing-rust/master/assets/japan.jpg) | ![Japan Draw](https://raw.githubusercontent.com/beltegeuse/genetic-drawing-rust/master/assets/j5.png) |
 
 ## TODO
 
-- Profiling and optimize code (webgpu? multi-thread implementation?)
-- WASM client
+- Add GPU implementation (webgpu?)
+- WASM client - Deploy on gh-pages.
 - Make more friendly panic message
 - Add documentation for the cli interface

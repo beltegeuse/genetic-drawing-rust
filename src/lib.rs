@@ -600,7 +600,9 @@ impl StrokeColor {
         pos: (i32, i32),
     ) -> StrokeColor {
         let s = target.get_pixel_value(pos.0, pos.1);
-        let normal = rand::distributions::Normal::new(0.0, 0.2);
+        // TODO: This parameter is quite important
+        //  Need to expose it to the user
+        let normal = rand::distributions::Normal::new(0.0, 0.05);
         match s {
             StrokeColor::Color(r, g, b) => StrokeColor::Color(
                 ensure_range(r + normal.sample(rng) as f32),
