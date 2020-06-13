@@ -150,6 +150,12 @@ fn main() {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("progressive_dir")
+                .help("directory where to save each iteration (path[:offset]) [optional]")
+                .short("p")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("color")
                 .help("generate color image")
                 .short("c"),
@@ -229,6 +235,24 @@ fn main() {
         _ => panic!("Wrong dist option: {:?}", dist),
     };
 
+    // Output directory for each iteration
+    let progressive_dir = match matches.value_of("progressive_dir") {
+        None => None,
+        Some(s) => {
+            let s = s.split(":").into_iter().map(|v| v).collect::<Vec<_>>();
+            match s[..] {
+                [s] => Some((s, 0)),
+                [s, i] => {
+                    let i = i
+                        .parse::<usize>()
+                        .expect(&format!("Impossible to parse {} as usize", i));
+                    Some((s, i))
+                }
+                _ => panic!("Impossible to parse progressive_dir argument"),
+            }
+        }
+    };
+
     // DNA
     let nb_iter = value_t_or_exit!(matches.value_of("iter"), usize);
     let nb_strokes = value_t_or_exit!(matches.value_of("strokes"), usize);
@@ -238,14 +262,13 @@ fn main() {
     let mut last_image = match matches.value_of("last") {
         None => None,
         Some(v) => {
-            let img =  image::open(v)
-            .expect(&format!("Impossible to open {}", v));
+            let img = image::open(v).expect(&format!("Impossible to open {}", v));
             if with_color {
                 Some(genetic_drawing::Image::Color(img.to_rgb()))
             } else {
                 Some(genetic_drawing::Image::Gray(img.to_luma()))
             }
-         },
+        }
     };
     let mut pb = pbr::ProgressBar::new(nb_iter as u64);
     for i in 0..nb_iter {
@@ -260,11 +283,24 @@ fn main() {
         );
         dna.iterate(nb_gen, &mut rng);
         last_image = Some(dna.to_image());
+
+        // Save the image if necessary
+        if let Some((outdir, iter)) = progressive_dir {
+            let outfile = std::path::Path::new(outdir).join(&format!("{:0>5}.png", iter + i));
+            last_image
+                .as_ref()
+                .unwrap()
+                .clone()
+                .as_dynamic_image()
+                .save(&outfile)
+                .expect(&format!("Impossible to save file {:?}", outfile));
+        }
         pb.inc();
     }
 
     if let Some(last_image) = last_image {
-        last_image.as_dynamic_image()
+        last_image
+            .as_dynamic_image()
             .save(&filename_out)
             .expect(&format!("Impossible to save {}", filename_out));
     }
