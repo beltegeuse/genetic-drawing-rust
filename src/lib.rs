@@ -300,10 +300,7 @@ impl GradientImage {
         // Do a transform to keep lower gradients as well
         // TODO: Explore or expose this parameter
         //  As some users want to make more aggressive approaches
-        let mag = mag
-            .into_iter()
-            .map(|v| (v / mag_max).powf(0.3))
-            .collect::<Vec<_>>();
+        let mag = mag.into_iter().map(|v| (v / mag_max).powf(0.3)).collect();
 
         GradientImage {
             mag: FloatImage {
